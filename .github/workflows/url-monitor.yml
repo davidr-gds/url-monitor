@@ -1,0 +1,53 @@
+name: URL Monitor
+
+on:
+  schedule:
+    - cron: '0 9 * * *'  # Runs daily at 9 AM UTC
+  workflow_dispatch:
+
+jobs:
+  check-url:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        url:
+          - https://committees.parliament.uk/work/8903/digital-centre-of-government/
+          - https://committees.parliament.uk/work/8903/digital-centre-of-government/publications/
+      fail-fast: false  # Continue checking other URLs even if one fails
+    
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v3
+      
+      - name: Fetch URL and check for changes
+        run: |
+          URL="${{ matrix.url }}"
+          # Create a safe filename from the URL
+          FILENAME=$(echo "$URL" | sed 's/[^a-zA-Z0-9]/_/g').txt
+          
+          curl -s "$URL" > new_content.txt
+          
+          if [ -f "snapshots/$FILENAME" ]; then
+            if ! diff -q "snapshots/$FILENAME" new_content.txt > /dev/null; then
+              echo "⚠️ URL has changed: $URL"
+              echo "Diff:"
+              diff "snapshots/$FILENAME" new_content.txt || true
+              exit 1
+            else
+              echo "✓ No changes detected for $URL"
+            fi
+          else
+            echo "First run - saving baseline for $URL"
+            mkdir -p snapshots
+          fi
+          
+          mv new_content.txt "snapshots/$FILENAME"
+      
+      - name: Commit updated snapshot
+        if: always()
+        run: |
+          git config user.name "GitHub Action"
+          git config user.email "action@github.com"
+          git add snapshots/
+          git commit -m "Update snapshot for ${{ matrix.url }}" || echo "No changes to commit"
+          git push
